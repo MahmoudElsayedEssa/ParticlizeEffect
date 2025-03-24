@@ -1,4 +1,4 @@
-package com.binissa.particlizeeffect.particlize.controller
+package com.example.particlize.controller
 
 import android.content.Context
 import android.util.Log
@@ -6,7 +6,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.ImageBitmap
-import com.binissa.particlizeeffect.particlize.config.ParticleEffectConfig
+import com.binissa.particlizeeffect.particlize.config.AnimationConfig
+import com.binissa.particlizeeffect.particlize.config.EmissionConfig
+import com.binissa.particlizeeffect.particlize.config.ParticleConfig
 import com.binissa.particlizeeffect.particlize.particle.ParticleSystem
 import com.binissa.particlizeeffect.particlize.particle.ParticleEffect
 import com.binissa.particlizeeffect.particlize.rendering.RenderEngine
@@ -30,14 +32,12 @@ class ParticlizeController {
     private val state = mutableStateOf(State.NONE)
     private val needsRedraw = mutableStateOf(false)
 
-    // The particle system and renderer
-    private val renderEngine = RenderEngine()
-    private var particleSystem: ParticleSystem? = null
-
 
     // Coroutine scope and job
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
     private var animationJob: Job? = null
+
+    private val renderEngine = RenderEngine()
 
     // Effect parameters
     private var currentEffect: ParticleEffect? = null
@@ -52,13 +52,7 @@ class ParticlizeController {
     private var pendingStartParams: StartParams? = null
     private var frameCount = 0
 
-
-
-    private var effectConfig = ParticleEffectConfig()
-
-    fun setConfig(config: ParticleEffectConfig) {
-        effectConfig = config
-    }
+    private var particleSystem: ParticleSystem? = null
 
     /**
      * Data class to hold start parameters
@@ -66,19 +60,13 @@ class ParticlizeController {
     private data class StartParams(
         val context: Context,
         val effect: ParticleEffect,
-        val config: ParticleEffectConfig,
+        val particleConfig: ParticleConfig,
+        val emissionConfig: EmissionConfig,
+        val animationConfig: AnimationConfig,
         val onComplete: () -> Unit
     )
 
-    private fun createParticleSystem(params: StartParams) {
-        // Create particle system with full config
-        particleSystem = ParticleSystem(
-            params.effect,
-            params.config
-        )
-    }
     /**
-     *
      * Called when content has been captured
      */
     fun onContentCaptured(bitmap: ImageBitmap) {
@@ -100,7 +88,6 @@ class ParticlizeController {
             emissionConfig = params.emissionConfig,
             animationConfig = params.animationConfig
         )
-
         // Start the effect
         currentEffect = params.effect
         onEffectComplete = params.onComplete
@@ -124,19 +111,17 @@ class ParticlizeController {
     fun start(
         context: Context,
         effect: ParticleEffect = ParticleEffect.DISINTEGRATION,
-        config: ParticleEffectConfig = effectConfig,
+        particleConfig: ParticleConfig ,
+        emissionConfig: EmissionConfig = EmissionConfig.Default,
+        animationConfig: AnimationConfig = AnimationConfig.Default,
         onComplete: () -> Unit = {}
     ) {
         // Store parameters for delayed start
-        effectConfig = config
-
-        // Store parameters in case we need to retry
         pendingStartParams = StartParams(
-            context,
-            effect,
-            config,
-            onComplete
+            context, effect, particleConfig, emissionConfig,
+            animationConfig, onComplete
         )
+
         // Only start if not already running
         if (state.value != State.NONE) {
             return
@@ -191,22 +176,25 @@ class ParticlizeController {
     /**
      * Render particles to canvas
      */
+
+    // In ParticlizeController - change the render method
     fun render(canvas: Canvas, size: Size) {
+        // Capture these values to avoid thread sync issues
         val particleData = particleSystem?.getParticleData() ?: return
         val effect = currentEffect ?: return
-
         val contentFade = particleSystem?.getCompletionPercentage() ?: 1f
+        val content = contentBitmap
 
+        // All rendering work happens in drawIntoCanvas, with no other work on main thread
         renderEngine.renderParticles(
             canvas = canvas,
             particleData = particleData,
-            originalContent = contentBitmap,
+            originalContent = content,
             contentFadeAmount = contentFade,
             size = size
         )
     }
 
-    // Other methods remain the same...
 
     /**
      * Checks if content capture is needed

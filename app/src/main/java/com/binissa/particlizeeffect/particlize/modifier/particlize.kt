@@ -14,7 +14,7 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
-import com.binissa.particlizeeffect.particlize.controller.ParticlizeController
+import com.example.particlize.controller.ParticlizeController
 import kotlinx.coroutines.launch
 
 /**

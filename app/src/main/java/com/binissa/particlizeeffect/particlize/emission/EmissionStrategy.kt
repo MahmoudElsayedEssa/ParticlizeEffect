@@ -8,22 +8,6 @@ import com.binissa.particlizeeffect.particlize.particle.Particle
 import com.binissa.particlizeeffect.particlize.particle.ParticleEffect
 
 /**
- * Interface for particle emission strategies
- */
-interface EmissionStrategy {
-    /**
-     * Generates particles based on a source bitmap
-     */
-    fun generateParticles(
-        bitmap: ImageBitmap,
-        pixelMap: PixelMap,
-        particleConfig: ParticleConfig,
-        emissionConfig: EmissionConfig,
-        effect: ParticleEffect
-    ): List<Particle>
-}
-
-/**
  * Enum defining the emission patterns
  */
 enum class EmissionPattern {

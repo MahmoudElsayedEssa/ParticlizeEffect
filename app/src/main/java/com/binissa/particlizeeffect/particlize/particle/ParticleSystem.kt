@@ -4,94 +4,34 @@ import android.util.Log
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toPixelMap
 import com.binissa.particlizeeffect.particlize.Animation.AnimationController
-import com.binissa.particlizeeffect.particlize.config.AssemblyConfig
-import com.binissa.particlizeeffect.particlize.config.DisintegrationConfig
+import com.binissa.particlizeeffect.particlize.config.AnimationConfig
 import com.binissa.particlizeeffect.particlize.config.EmissionConfig
 import com.binissa.particlizeeffect.particlize.config.ParticleConfig
-import com.binissa.particlizeeffect.particlize.config.ParticleEffectConfig
 import com.binissa.particlizeeffect.particlize.emission.EmissionController
-import com.binissa.particlizeeffect.particlize.physics.AssemblyPhysicsEngine
-import com.binissa.particlizeeffect.particlize.physics.DisintegrationPhysicsEngine
-import com.binissa.particlizeeffect.particlize.physics.PhysicsBehavior
+import com.binissa.particlizeeffect.particlize.emission.EmissionPattern
+import com.binissa.particlizeeffect.particlize.physics.AssemblyPhysics
+import com.binissa.particlizeeffect.particlize.physics.DisintegrationPhysics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 
-
+/**
+ * Updated Particle System with amazing effects support
+ */
 class ParticleSystem(
-    private val effectType: ParticleEffect,
-    private val config: ParticleEffectConfig
+    private val particleConfig: ParticleConfig,
+    private val emissionConfig: EmissionConfig,
+    private val animationConfig: AnimationConfig
 ) {
     // Component instances
-    private val storage = ParticleStorage(config.particleCount)
-    private val animationController = AnimationController(config)
-
-    // Derived configurations
-    private val particleConfig = ParticleConfig(
-        size = config.particleSize,
-        shape = config.particleShape,
-        friction = config.friction
-    )
-
-    private val emissionConfig = EmissionConfig(
-        type = config.emissionType,
-        pattern = config.emissionPattern,
-        particleCount = config.particleCount,
-        durationFactor = config.emissionDuration
-    )
-
-    // Create appropriate physics based on effect type
-    private val physics = when (effectType) {
-        ParticleEffect.DISINTEGRATION -> createDisintegrationPhysics()
-        ParticleEffect.ASSEMBLY -> createAssemblyPhysics()
-    }
-
-    /**
-     * Create disintegration physics from config
-     */
-    private fun createDisintegrationPhysics(): PhysicsBehavior {
-        return DisintegrationPhysicsEngine(
-            particleConfig = particleConfig,
-            disintegrationConfig = DisintegrationConfig().apply {
-                angle = config.disintegrationAngle
-                angleVariation = config.disintegrationAngleVariation
-                explosionForce = config.disintegrationForce
-                gravityForce = config.disintegrationGravity
-                turbulenceStrength = config.turbulenceStrength
-                turbulenceScale = config.turbulenceScale
-                rotationSpeed = config.rotationSpeed
-                fadeOutRate = config.fadeRate
-                scaleDownFactor = config.scaleRate
-            }
-        )
-    }
-
-    /**
-     * Create assembly physics from config
-     */
-    private fun createAssemblyPhysics(): PhysicsBehavior {
-        return AssemblyPhysicsEngine(
-            particleConfig = particleConfig,
-            assemblyConfig = AssemblyConfig().apply {
-                approachSpeed = config.assemblyApproachSpeed
-                springStiffness = config.assemblySpringStiffness
-                springDamping = config.assemblySpringDamping
-                turbulenceStrength = config.turbulenceStrength
-                turbulenceScale = config.turbulenceScale
-                fadeInRate = config.fadeRate
-            }
-        )
-    }
+    private val storage = ParticleStorage(emissionConfig.particleCount)
+    private val disintegrationPhysics = DisintegrationPhysics(particleConfig)
+    private val assemblyPhysics = AssemblyPhysics(particleConfig)
     private val emissionController = EmissionController(emissionConfig)
-
-
-    private var physicsBehavior: PhysicsBehavior? = null
+    private val animationController = AnimationController(animationConfig)
 
     // Current effect type
     private var currentEffect: ParticleEffect? = null
@@ -100,11 +40,23 @@ class ParticleSystem(
     private var contentWidth = 0
     private var contentHeight = 0
 
+    // Statistics
+    private var activeParticleCount = 0
+    private var frameCount = 0
+
+    init {
+        // Connect animation controller to physics engines
+        disintegrationPhysics.setAnimationController(animationController)
+        assemblyPhysics.setAnimationController(animationController)
+    }
+
     /**
-     * Generate particles from bitmap
+     * Generate particles from bitmap with enhanced visual properties
      */
     suspend fun generateParticles(bitmap: ImageBitmap, effect: ParticleEffect) {
         withContext(Dispatchers.Default) {
+            Log.d("ParticleSystem", "Generating particles for effect: $effect")
+
             // Store content dimensions
             contentWidth = bitmap.width
             contentHeight = bitmap.height
@@ -112,15 +64,23 @@ class ParticleSystem(
             // Set current effect
             currentEffect = effect
 
-            physicsBehavior = PhysicsFactory.createPhysics(effect, particleConfig)
-
-            // Reset storage
+            // Reset components
+            disintegrationPhysics.reset()
+            assemblyPhysics.reset()
             storage.reset()
+            frameCount = 0
 
             // Create particles from bitmap
             createParticlesFromBitmap(bitmap, effect)
 
-            // Calculate delays for patterned emission
+            // Initialize particles with effect-specific settings
+            if (effect == ParticleEffect.DISINTEGRATION) {
+                initializeDisintegrationParticles()
+            } else {
+                initializeAssemblyParticles()
+            }
+
+            // Calculate emission delays
             emissionController.calculateDelays(
                 storage,
                 emissionConfig.pattern,
@@ -130,11 +90,9 @@ class ParticleSystem(
             )
 
             // Log generation stats
-            Log.d(
-                "ModularParticleSystem",
-                "Generated ${storage.particleCount} particles " +
-                        "(${storage.getActiveCount()} active, ${storage.getPendingCount()} pending)"
-            )
+            activeParticleCount = storage.getActiveCount()
+            Log.d("ParticleSystem", "Generated ${storage.particleCount} particles " +
+                    "(${activeParticleCount} active, ${storage.getPendingCount()} pending)")
 
             // Start animation
             animationController.start()
@@ -142,7 +100,67 @@ class ParticleSystem(
     }
 
     /**
-     * Create initial particles from bitmap
+     * Initialize special settings for disintegration particles
+     */
+    private fun initializeDisintegrationParticles() {
+        Log.d("ParticleSystem", "Initializing disintegration particles")
+
+        for (i in 0 until storage.particleCount) {
+            // Apply random visual properties using EmissionController
+            emissionController.applyRandomVisualProperties(storage, i)
+
+            // Initialize random velocities for more natural explosion
+            emissionController.initializeVelocities(storage, i, particleConfig.velocityMagnitude)
+
+            // Start with full alpha for disintegration effect
+            if (!emissionConfig.randomAlphas) {
+                storage.alphas[i] = 1.0f
+            }
+
+            // Start with full scale
+            if (!emissionConfig.randomSizes) {
+                storage.scales[i] = 1.0f
+            }
+        }
+    }
+
+    /**
+     * Initialize special settings for assembly particles
+     */
+    private fun initializeAssemblyParticles() {
+        Log.d("ParticleSystem", "Initializing assembly particles")
+
+        for (i in 0 until storage.particleCount) {
+            // Apply random visual properties
+            emissionController.applyRandomVisualProperties(storage, i)
+
+            // For assembly, start with low alpha
+            storage.alphas[i] = 0.3f + Random.nextFloat() * 0.2f
+
+            // Start with smaller scale
+            storage.scales[i] = 0.4f + Random.nextFloat() * 0.2f
+
+            // Calculate random offset angle
+            val angle = Random.nextFloat() * 2 * Math.PI.toFloat()
+
+            // Random distance - between 150-300 pixels
+            val distance = 150f + Random.nextFloat() * 150f
+
+            // Calculate offset
+            val offsetX = kotlin.math.cos(angle) * distance
+            val offsetY = kotlin.math.sin(angle) * distance
+
+            // Move particle away from target position
+            val origX = storage.positionX[i]
+            val origY = storage.positionY[i]
+
+            storage.positionX[i] = origX + offsetX
+            storage.positionY[i] = origY + offsetY
+        }
+    }
+
+    /**
+     * Create particles from bitmap
      */
     private fun createParticlesFromBitmap(
         bitmap: ImageBitmap,
@@ -152,10 +170,12 @@ class ParticleSystem(
         val width = bitmap.width
         val height = bitmap.height
 
-        // Sampling parameters
+        // Sampling parameters to get good coverage
         val targetCount = min(storage.capacity, emissionConfig.particleCount)
         val samplingDensity = sqrt(targetCount / (width * height).toFloat())
         val stepSize = max(1, (1 / samplingDensity).toInt())
+
+        Log.d("ParticleSystem", "Creating particles with step size: $stepSize")
 
         // Generate particles
         for (x in 0 until width step stepSize) {
@@ -180,53 +200,59 @@ class ParticleSystem(
                         },
                         size = particleConfig.size * (0.7f + Random.nextFloat() * 0.6f)
                     )
-
-                    if (index >= 0) {
-                        // Set initial velocity
-                        val angle = Random.nextFloat() * 2 * PI.toFloat()
-                        val speed = particleConfig.velocityMagnitude * (0.5f + Random.nextFloat())
-                        storage.velocityX[index] = cos(angle) * speed
-                        storage.velocityY[index] = sin(angle) * speed
-
-                        // Special setup for assembly effect
-                        if (effect == ParticleEffect.ASSEMBLY) {
-                            val distance = 100f + Random.nextFloat() * 100f
-                            val offsetAngle = Random.nextFloat() * 2 * PI.toFloat()
-                            storage.positionX[index] += cos(offsetAngle) * distance
-                            storage.positionY[index] += sin(offsetAngle) * distance
-                        }
-
-                        // Initial active state (will be overridden by emission controller)
-                        storage.active[index] = true
-                    }
                 }
             }
 
             if (storage.particleCount >= storage.capacity) break
         }
+
+        Log.d("ParticleSystem", "Created ${storage.particleCount} particles")
     }
 
     /**
-     * Update animation state
+     * Update animation state with enhanced physics
      */
     fun updateAnimation(currentTime: Long): Boolean {
         val effect = currentEffect ?: return false
-        val physics = physicsBehavior ?: return false
+
+        // Update frame counter
+        frameCount++
+
+        // Debug logging occasionally
+        val shouldLog = frameCount % 60 == 0
 
         // Update animation controller
         val animationRunning = animationController.update(currentTime)
-        if (!animationRunning) return false
+        if (!animationRunning) {
+            Log.d("ParticleSystem", "Animation completed after $frameCount frames")
+            return false
+        }
 
         // Get time since last frame
-        val deltaTime = animationController.getDeltaTime(currentTime)
+        val deltaTime = animationController.getDeltaTime(currentTime).coerceIn(0.001f, 0.1f)
 
         // Process pending particles
         activatePendingParticles()
 
-        // Update all active particles
+        // Choose physics behavior based on effect
+        val physicsBehavior = when (effect) {
+            ParticleEffect.DISINTEGRATION -> disintegrationPhysics
+            ParticleEffect.ASSEMBLY -> assemblyPhysics
+        }
+
+        // Get active particles
         val activeIndices = storage.getActiveParticleIndices()
+        activeParticleCount = activeIndices.size
+
+        // Log stats occasionally
+        if (shouldLog) {
+            Log.d("ParticleSystem", "Frame $frameCount: ${activeParticleCount} active particles, " +
+                    "progress: ${animationController.easedProgress}")
+        }
+
+        // Update all active particles
         for (i in activeIndices) {
-            physics.updateParticle(
+            physicsBehavior.updateParticle(
                 storage,
                 i,
                 deltaTime,
@@ -254,8 +280,8 @@ class ParticleSystem(
         }
 
         // Log when particles are activated
-        if (activated > 0 && activated % 100 == 0) {
-            Log.d("ModularParticleSystem", "Activated $activated particles at progress $progress")
+        if (activated > 0) {
+            Log.d("ParticleSystem", "Activated $activated particles at progress $progress")
         }
     }
 

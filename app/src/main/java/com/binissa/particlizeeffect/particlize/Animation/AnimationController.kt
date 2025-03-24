@@ -1,25 +1,29 @@
 package com.binissa.particlizeeffect.particlize.Animation
 
-import androidx.compose.ui.graphics.Color
-import com.binissa.particlizeeffect.particlize.config.ParticleEffectConfig
-import com.binissa.particlizeeffect.particlize.particle.ParticleEffect
-import com.binissa.particlizeeffect.particlize.particle.ParticleStorage
-import kotlin.math.PI
+import android.util.Log
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Easing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import com.binissa.particlizeeffect.particlize.config.AnimationConfig
 import kotlin.math.min
-import kotlin.math.sin
 import kotlin.random.Random
 
-
 /**
- * Enhanced animation controller with advanced visual effects
+ * Enhanced Animation Controller with per-particle timing and visual effects
  */
-class AnimationController(private val config: ParticleEffectConfig) {
-    // Animation timing
+class AnimationController(val config: AnimationConfig) {
+    // Timing state
     private var startTime = 0L
     private var lastUpdateTime = 0L
+    private var pauseStartTime = 0L
+    private var totalPausedTime = 0L
 
     // Animation state
     var isRunning = false
+        private set
+
+    var isPaused = false
         private set
 
     var rawProgress = 0f
@@ -28,244 +32,221 @@ class AnimationController(private val config: ParticleEffectConfig) {
     var easedProgress = 0f
         private set
 
-    // Random seeds for consistent variation per particle
-    private val randomScales = FloatArray(10000) {
-        lerp(
-            config.scaleVariationRange.first,
-            config.scaleVariationRange.second,
-            Random.nextFloat()
-        )
-    }
+    // Per-particle randomization
+    private val particleTimeOffsets = mutableMapOf<Int, Float>()
+    private val particleAlphaFactors = mutableMapOf<Int, Float>()
+    private val particleScaleFactors = mutableMapOf<Int, Float>()
+    private val particleFadeInFactors = mutableMapOf<Int, Float>()
+    private val particleFadeOutFactors = mutableMapOf<Int, Float>()
 
-    private val randomAlphas = FloatArray(10000) {
-        lerp(
-            config.randomAlphaRange.first,
-            config.randomAlphaRange.second,
-            Random.nextFloat()
-        )
-    }
+    // For generating interesting visual patterns
+    private val oscillationPhases = mutableMapOf<Int, Float>()
 
-    private val randomRotations = FloatArray(10000) {
-        config.rotationSpeed * (1f + (Random.nextFloat() - 0.5f) * 2f * config.rotationVariation) *
-                (if (config.randomRotationDirection && Random.nextBoolean()) 1f else -1f)
-    }
-
-    private val randomLifetimes = FloatArray(10000) {
-        if (config.randomizeLifetime) {
-            lerp(
-                config.lifetimeRange.first,
-                config.lifetimeRange.second,
-                Random.nextFloat()
-            )
-        } else 1f
-    }
+    // Custom easing function for smoother animations
+    private val customEaseInOut = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
 
     /**
      * Start the animation
      */
     fun start() {
+        Log.d("EnhancedAnimation", "Starting animation with duration: ${config.duration}ms")
         startTime = System.currentTimeMillis()
         lastUpdateTime = startTime
         isRunning = true
+        isPaused = false
         rawProgress = 0f
         easedProgress = 0f
+        totalPausedTime = 0L
+
+        // Clear any existing particle randomization
+        particleTimeOffsets.clear()
+        particleAlphaFactors.clear()
+        particleScaleFactors.clear()
+        particleFadeInFactors.clear()
+        particleFadeOutFactors.clear()
+        oscillationPhases.clear()
     }
 
     /**
-     * Update animation progress based on time
+     * Pause the animation
+     */
+    fun pause() {
+        if (isRunning && !isPaused) {
+            isPaused = true
+            pauseStartTime = System.currentTimeMillis()
+            Log.d("EnhancedAnimation", "Animation paused at progress: $easedProgress")
+        }
+    }
+
+    /**
+     * Resume the animation after pausing
+     */
+    fun resume() {
+        if (isRunning && isPaused) {
+            totalPausedTime += System.currentTimeMillis() - pauseStartTime
+            isPaused = false
+            lastUpdateTime = System.currentTimeMillis()
+            Log.d("EnhancedAnimation", "Animation resumed at progress: $easedProgress")
+        }
+    }
+
+    /**
+     * Update animation state based on current time
      */
     fun update(currentTime: Long): Boolean {
         if (!isRunning) return false
+        if (isPaused) return true  // Still running but paused
 
         // Calculate time since last frame
         val deltaTime = (currentTime - lastUpdateTime) / 1000f
         lastUpdateTime = currentTime
 
-        // Calculate total progress
-        val elapsedTime = currentTime - startTime
+        // Calculate effective elapsed time (accounting for pauses)
+        val effectiveElapsedTime = currentTime - startTime - totalPausedTime
         val duration = config.duration
 
         // Check if animation is complete
-        if (elapsedTime >= duration) {
-            isRunning = false
-            rawProgress = 1f
-            easedProgress = 1f
-            return false
+        if (effectiveElapsedTime >= duration) {
+            // Handle repetition if configured
+            if (config.repeatCount != 0) {
+                // Handle infinite repetition (-1) or decrement count
+                if (config.repeatCount > 0) {
+                    config.repeatCount--
+                }
+                // Reset for next repetition but keep particle randomization
+                startTime = currentTime - totalPausedTime
+                Log.d("EnhancedAnimation", "Animation repeating, remaining repeats: ${config.repeatCount}")
+                return true
+            } else {
+                isRunning = false
+                rawProgress = 1f
+                easedProgress = 1f
+                Log.d("EnhancedAnimation", "Animation completed")
+                return false
+            }
         }
 
         // Calculate progress values
-        rawProgress = (elapsedTime.toFloat() / duration).coerceIn(0f, 1f)
-        easedProgress = config.easing.transform(rawProgress)
+        rawProgress = (effectiveElapsedTime.toFloat() / duration).coerceIn(0f, 1f)
+
+        // Apply easing with error handling
+        try {
+            // Use configured easing or fallback to custom ease-in-out
+            easedProgress = config.easing.transform(rawProgress)
+        } catch (e: Exception) {
+            Log.e("EnhancedAnimation", "Error applying easing: ${e.message}")
+            easedProgress = customEaseInOut.transform(rawProgress) // Fallback
+        }
 
         return true
     }
 
     /**
-     * Update particle visual properties based on animation progress
-     */
-    fun updateParticleVisuals(
-        storage: ParticleStorage,
-        index: Int,
-        effect: ParticleEffect
-    ) {
-        val baseIndex = index % 10000  // Ensure we stay within our random arrays
-
-        // Apply color transformations if needed
-        if (!config.useOriginalColors && config.tintColor != null) {
-            val originalColor = storage.colors[index]
-            val tint = config.tintColor!!
-
-            // Apply tint with configured strength
-            storage.colors[index] = blendColors(originalColor, tint, config.tintStrength)
-        }
-
-        // Alpha/transparency effects
-        updateAlpha(storage, index, baseIndex, effect)
-
-        // Scale effects
-        updateScale(storage, index, baseIndex, effect)
-
-        // Rotation effects
-        updateRotation(storage, index, baseIndex)
-
-        // Apply lifetime variations
-        if (config.randomizeLifetime) {
-            // For disintegration, particles with shorter lifetimes fade out faster
-            // For assembly, particles with longer lifetimes start appearing earlier
-            val lifetime = randomLifetimes[baseIndex]
-
-            if (effect == ParticleEffect.DISINTEGRATION) {
-                // Shorter lifetime = reach end state faster
-                if (rawProgress > lifetime) {
-                    storage.deactivateParticle(index)
-                }
-            }
-        }
-    }
-
-    /**
-     * Update particle alpha value
-     */
-    private fun updateAlpha(
-        storage: ParticleStorage,
-        index: Int,
-        baseIndex: Int,
-        effect: ParticleEffect
-    ) {
-        // Base alpha value depends on effect and progress
-        val baseAlpha = when (effect) {
-            ParticleEffect.DISINTEGRATION -> 1f - easedProgress  // Fade out
-            ParticleEffect.ASSEMBLY -> easedProgress  // Fade in
-        }
-
-        // Apply random initial alpha if enabled
-        var finalAlpha = if (config.randomAlpha) {
-            baseAlpha * randomAlphas[baseIndex]
-        } else {
-            baseAlpha
-        }
-
-        // Apply alpha variation over time if enabled
-        if (config.alphaVariationSpeed > 0) {
-            val variation = sin(rawProgress * config.alphaVariationSpeed * 10f + baseIndex * 0.1f) * 0.3f + 0.7f
-            finalAlpha *= variation
-        }
-
-        // Apply to particle
-        storage.alphas[index] = finalAlpha.coerceIn(0f, 1f)
-
-        // Deactivate if completely transparent
-        if (finalAlpha <= 0.01f) {
-            storage.deactivateParticle(index)
-        }
-    }
-
-    /**
-     * Update particle scale
-     */
-    private fun updateScale(
-        storage: ParticleStorage,
-        index: Int,
-        baseIndex: Int,
-        effect: ParticleEffect
-    ) {
-        // Base scale depends on effect and progress
-        val baseScale = when (effect) {
-            ParticleEffect.DISINTEGRATION -> {
-                // Start at 1.0, shrink to finalScale
-                lerp(1.0f, config.finalScale, easedProgress)
-            }
-            ParticleEffect.ASSEMBLY -> {
-                // Start at initialScale, grow to 1.0
-                lerp(config.initialScale, 1.0f, easedProgress)
-            }
-        }
-
-        // Apply random scale variation if enabled
-        var finalScale = if (config.scaleVariation) {
-            baseScale * randomScales[baseIndex]
-        } else {
-            baseScale
-        }
-
-        // Apply pulsating effect if enabled
-        if (config.pulsateScale) {
-            val pulsate = sin(rawProgress * config.pulsateFrequency * 2 * PI.toFloat() + baseIndex * 0.1f)
-            finalScale *= 1f + (pulsate * config.pulsateAmplitude)
-        }
-
-        // Apply to particle
-        storage.scales[index] = finalScale.coerceAtLeast(0.1f)  // Prevent negative/zero scale
-    }
-
-    /**
-     * Update particle rotation
-     */
-    private fun updateRotation(
-        storage: ParticleStorage,
-        index: Int,
-        baseIndex: Int
-    ) {
-        if (!config.enableRotation) return
-
-        // Get rotation speed with variation
-        val rotationAmount = randomRotations[baseIndex] * (lastUpdateTime - startTime) / 1000f
-
-        // Apply rotation (continuous over time)
-        storage.rotations[index] = (storage.rotations[index] + rotationAmount) % 360f
-    }
-
-    /**
-     * Get the time since the last frame in seconds
+     * Get time elapsed since last frame in seconds
      */
     fun getDeltaTime(currentTime: Long): Float {
         return min(0.05f, (currentTime - lastUpdateTime) / 1000f)
     }
 
     /**
-     * Reset the animation
+     * Reset the animation controller
      */
     fun reset() {
+        Log.d("EnhancedAnimation", "Animation reset")
         isRunning = false
+        isPaused = false
         rawProgress = 0f
         easedProgress = 0f
+
+        // Keep particle randomization for consistent behavior if reused
     }
 
     /**
-     * Blend two colors with the given factor
+     * Get per-particle progress with randomized timing offset
      */
-    private fun blendColors(color1: Color, color2: Color, factor: Float): Color {
-        val r = lerp(color1.red, color2.red, factor)
-        val g = lerp(color1.green, color2.green, factor)
-        val b = lerp(color1.blue, color2.blue, factor)
-        val a = lerp(color1.alpha, color2.alpha, factor)
-        return Color(r, g, b, a)
+    fun getParticleProgress(particleIndex: Int): Float {
+        // Get or create timing offset for this particle
+        val offset = particleTimeOffsets.getOrPut(particleIndex) {
+            if (config.randomizeTimings) {
+                // Random offset within configured range
+                Random.nextFloat() * config.timingVariation * 2f - config.timingVariation
+            } else {
+                0f // No offset if randomization disabled
+            }
+        }
+
+        // Apply offset and clamp to valid range
+        return (easedProgress + offset).coerceIn(0f, 1f)
     }
 
     /**
-     * Linear interpolation between values
+     * Get alpha factor for a particle (0.0-1.0)
+     * This combines base progress with randomized variations
      */
-    private fun lerp(a: Float, b: Float, t: Float): Float {
-        return a + (b - a) * t
+    fun getParticleAlpha(particleIndex: Int, isDisintegration: Boolean): Float {
+        // Get particle-specific progress (possibly with time offset)
+        val particleProgress = getParticleProgress(particleIndex)
+
+        // Get or create alpha randomization factor
+        val alphaFactor = particleAlphaFactors.getOrPut(particleIndex) {
+            0.8f + Random.nextFloat() * 0.4f // 0.8-1.2 range
+        }
+
+        // Get or create fade rate factors
+        val fadeInFactor = particleFadeInFactors.getOrPut(particleIndex) {
+            0.9f + Random.nextFloat() * 0.2f // 0.9-1.1 range
+        }
+
+        val fadeOutFactor = particleFadeOutFactors.getOrPut(particleIndex) {
+            0.9f + Random.nextFloat() * 0.2f // 0.9-1.1 range
+        }
+
+        // For disintegration, alpha decreases with progress
+        // For assembly, alpha increases with progress
+        return if (isDisintegration) {
+            // Fade out with randomization
+            ((1f - particleProgress * fadeOutFactor) * alphaFactor).coerceIn(0f, 1f)
+        } else {
+            // Fade in with randomization
+            (particleProgress * fadeInFactor * alphaFactor).coerceIn(0f, 1f)
+        }
+    }
+
+    /**
+     * Get scale factor for a particle
+     * This combines base progress with randomized variations
+     */
+    fun getParticleScale(particleIndex: Int, isDisintegration: Boolean): Float {
+        // Get particle-specific progress (possibly with time offset)
+        val particleProgress = getParticleProgress(particleIndex)
+
+        // Get or create scale randomization factor
+        val scaleFactor = particleScaleFactors.getOrPut(particleIndex) {
+            0.85f + Random.nextFloat() * 0.3f // 0.85-1.15 range
+        }
+
+        // For disintegration: start at 100%, shrink to 70%
+        // For assembly: start at 50%, grow to 100%
+        return if (isDisintegration) {
+            // Scale down with randomization
+            (1f - particleProgress * 0.3f) * scaleFactor
+        } else {
+            // Scale up with randomization
+            (0.5f + particleProgress * 0.5f) * scaleFactor
+        }
+    }
+
+    /**
+     * Get oscillation value for interesting visual effects
+     * Returns -1 to 1 value based on progress and particle-specific phase
+     */
+    fun getParticleOscillation(particleIndex: Int, frequency: Float = 4f): Float {
+        // Get or create oscillation phase for this particle
+        val phase = oscillationPhases.getOrPut(particleIndex) {
+            Random.nextFloat() * 2f * Math.PI.toFloat()
+        }
+
+        // Calculate oscillation based on progress, phase and frequency
+        return kotlin.math.sin(rawProgress * frequency * Math.PI.toFloat() * 2f + phase)
     }
 }
